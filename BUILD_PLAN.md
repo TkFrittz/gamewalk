@@ -40,7 +40,7 @@ copy, so there is nothing to reconcile. This also means:
 - Config survives reinstalling the app, and survives switching phones.
 - Editing `config.json` by hand still works, and the **app's UI updates live when I do** —
   the PC watches the file and pushes changes out. Live updating runs in both directions.
-- The app needs no migration logic when the schema grows; it renders whatever the PC sends.
+- The app needs no migration logic when the schema grows — see the `meta` block in §4.
 
 **The exception is settings the phone needs before it can talk to the PC** — the PC's address,
 the token, and which sensor mode to use. Those obviously can't live on the PC, so they sit in
@@ -77,6 +77,10 @@ and a state-machine bug can never be mistaken for each other:
   cadence, tiers, hysteresis, hold. No detector involved.
 - `tools/replay.py` — plays recorded raw traces through the Mode B detector. Exercises
   detection only.
+
+**`--dry-run` is not optional.** Developing this means running it at a keyboard, and a helper
+that actually holds `W` will type into the editor I'm working in. Dry-run logs every
+press/release with timing instead of injecting it, and it's the default for the test suite.
 
 **Done when:** `fakestep.py --ramp 80:180` visibly walks then runs my character in the real
 game, hysteresis doesn't flicker at the boundary, and releasing happens within ~half a second
@@ -127,6 +131,15 @@ key from repository secrets, and published to a GitHub Release.
 ### M5 — App core: sensors and screen-off survival
 Foreground service, wake-up step sensor with `maxReportLatencyUs = 0`, partial wake lock,
 Wi-Fi lock, battery-optimization prompt, UDP sender, heartbeat, Mode A/B switch.
+
+**Three of the permissions are runtime prompts, not manifest lines**, and each one silently
+breaks a different thing if skipped: `ACTIVITY_RECOGNITION` (API 29+) — without it the step
+sensor returns nothing at all; `POST_NOTIFICATIONS` (API 33+) — denied, the foreground
+service notification never shows, and on Android 14 a foreground service without a visible
+notification is a candidate for being killed; and the battery-optimization exemption, which
+is a system dialog rather than a permission. The onboarding flow asks for all three in order
+and refuses to arm until they're granted, because each failure mode looks identical from the
+outside: steps simply stop arriving.
 
 **Done when:** phone in pocket, **screen off, 15 minutes**, and the PC's status line shows a
 steady stream with no gaps — verified from the PC log, not from the phone.
@@ -208,7 +221,34 @@ than a code change; the app renders the list generically for the same reason.
 
 Validation lives on the PC and is strict: a rejected patch is answered with `CFGERR` and the
 old config stays live. **The app can't put the PC into a broken state**, which matters when
-the settings UI is a phone screen being poked at arm's length.
+the settings UI is a phone screen being poked at arm's length. Rules worth naming, because
+each is reachable by dragging a slider: `exit_spm < enter_spm` for every tier (equal values
+reintroduce the flicker hysteresis exists to prevent), tiers strictly ordered by `enter_spm`,
+`min_ms ≤ fixed_ms ≤ max_ms`, every key name resolvable to a scancode, and at least one tier.
+
+`config.json` doesn't ship — the PC writes it from `pc/config.default.json` on first run, so
+a fresh clone starts working and a corrupted file can be fixed by deleting it.
+
+### The `meta` block — why the app doesn't hardcode the schema
+
+An app with a hand-written screen per setting has to be rebuilt and re-released every time a
+config field is added, which defeats the point of downloading an APK once. So `CFG!` carries
+a `meta` section describing how to render each field:
+
+```jsonc
+"meta": {
+  "hold.multiplier": {
+    "type": "float", "min": 1.0, "max": 3.0, "step": 0.05, "group": "Smoothness",
+    "label": "Hold multiplier",
+    "help": "How long W stays held, as a multiple of your step interval. Higher coasts longer."
+  },
+  "tiers[].keys": { "type": "keys", "group": "Controls", "label": "Keys held" }
+}
+```
+
+The app renders controls from `meta` and skips fields it has no widget type for. **A new
+config field then needs no app update** — the PC describes it and the phone draws it. It also
+puts the help text on the PC, where I can fix wording without a release.
 
 ## 5. Protocol
 
@@ -258,6 +298,17 @@ rather than dragging in TCP alongside.
 **Pairing** exists so a housemate's phone can't walk my character into a wall. The PIN is
 typed once, ever, and `require_pin: false` turns it off for a trusted LAN.
 
+**The PC's address will change**, because home routers hand out DHCP leases and a stored IP
+goes stale after a reboot. So the app treats a saved address as a hint, not a fact: if no
+`CFG!` or `PONG` answers within two seconds of arming, it re-runs discovery and re-binds to
+whatever answers with the token it already holds. The token is the identity; the address is
+disposable. This is the difference between "works until the router reboots" and "works", and
+it costs one timeout and a re-broadcast.
+
+**`HELLO` carries the app version** so the PC can say "app is older than the helper, some
+settings won't appear" in its status line — a mismatch should be a printed sentence, not a
+config screen that silently omits half its rows.
+
 ## 6. How the APK gets to my phone
 
 This is requirement A, and it's a CI problem rather than a build problem. **GitHub's runners
@@ -294,6 +345,7 @@ path — which is the entire point.
 | Layer | How | Needs |
 |---|---|---|
 | State machine, detector, protocol, config validation | `pytest`, pure functions, no I/O | nothing |
+| — *these run on CI's Linux runners*, so `keys.py` must import cleanly off-Windows and fail only on use | | |
 | Cadence → keys, end to end | `fakestep.py` against a real game | PC only |
 | Detector against real walking | recorded traces + `replay.py` | one trace |
 | Live config | `remote.py` while `fakestep.py` runs | PC only |
