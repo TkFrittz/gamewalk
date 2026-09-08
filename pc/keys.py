@@ -80,23 +80,59 @@ KEYEVENTF_KEYUP = 0x0002
 KEYEVENTF_SCANCODE = 0x0008
 
 
+# ULONG_PTR is pointer-sized: 8 bytes on x64, 4 on x86. Getting this wrong
+# shifts every field after it.
+_ULONG_PTR = (
+    ctypes.c_ulonglong if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_ulong
+)
+
+
+class _MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ("dx", wintypes.LONG),
+        ("dy", wintypes.LONG),
+        ("mouseData", wintypes.DWORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", _ULONG_PTR),
+    ]
+
+
 class _KEYBDINPUT(ctypes.Structure):
     _fields_ = [
         ("wVk", wintypes.WORD),
         ("wScan", wintypes.WORD),
         ("dwFlags", wintypes.DWORD),
         ("time", wintypes.DWORD),
-        ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+        ("dwExtraInfo", _ULONG_PTR),
+    ]
+
+
+class _HARDWAREINPUT(ctypes.Structure):
+    _fields_ = [
+        ("uMsg", wintypes.DWORD),
+        ("wParamL", wintypes.WORD),
+        ("wParamH", wintypes.WORD),
     ]
 
 
 class _INPUTUNION(ctypes.Union):
-    _fields_ = [("ki", _KEYBDINPUT), ("_pad", ctypes.c_byte * 24)]
+    # All three members must be declared, even though only `ki` is ever used.
+    # SendInput validates the cbSize argument against its own sizeof(INPUT),
+    # and MOUSEINPUT is the largest member -- 32 bytes on x64 against
+    # KEYBDINPUT's 24. Declaring only the keyboard member makes the struct 32
+    # bytes instead of 40, and every call is rejected with ERROR_INVALID_
+    # PARAMETER (87) without a single key ever being pressed.
+    _fields_ = [("mi", _MOUSEINPUT), ("ki", _KEYBDINPUT), ("hi", _HARDWAREINPUT)]
 
 
 class _INPUT(ctypes.Structure):
     _anonymous_ = ("u",)
     _fields_ = [("type", wintypes.DWORD), ("u", _INPUTUNION)]
+
+
+#: What sizeof(INPUT) must be for SendInput to accept it.
+EXPECTED_INPUT_SIZE = 40 if ctypes.sizeof(ctypes.c_void_p) == 8 else 28
 
 
 class Sink(Protocol):
@@ -111,6 +147,11 @@ class WindowsSink:
         if not IS_WINDOWS:
             raise RuntimeError("WindowsSink requires Windows; use DryRunSink")
         self._user32 = ctypes.WinDLL("user32", use_last_error=True)
+        # Declaring these makes ctypes marshal the pointer correctly rather
+        # than guessing from the Python value.
+        self._user32.SendInput.argtypes = (
+            wintypes.UINT, ctypes.POINTER(_INPUT), ctypes.c_int)
+        self._user32.SendInput.restype = wintypes.UINT
 
     def _send(self, name: str, up: bool) -> None:
         key = normalize(name)
@@ -126,11 +167,18 @@ class WindowsSink:
             flags |= KEYEVENTF_KEYUP
 
         inp = _INPUT(type=INPUT_KEYBOARD)
-        inp.ki = _KEYBDINPUT(0, scan, flags, 0, None)
+        inp.ki = _KEYBDINPUT(0, scan, flags, 0, 0)
         sent = self._user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(_INPUT))
         if sent != 1:
+            err = ctypes.get_last_error()
+            hint = {
+                87: "the INPUT struct is the wrong size for this Python build",
+                5: "blocked by UIPI -- the focused window runs as administrator, "
+                   "so run this helper as administrator too",
+            }.get(err, "")
             raise OSError(
-                f"SendInput failed for {key!r}: {ctypes.get_last_error()}"
+                f"SendInput failed for {key!r}: error {err}"
+                + (f" ({hint})" if hint else "")
             )
 
     def press(self, name: str) -> None:
