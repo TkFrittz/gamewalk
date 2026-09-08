@@ -35,6 +35,9 @@ CFG_OK = "CFGOK"
 CFG_ERR = "CFGERR"
 STAT = "STAT"
 PONG = "PONG"
+#: PC -> phone. Lets the desktop app drive settings that only the
+#: phone can act on, such as which sensor to use.
+CMD = "CMD"
 
 #: Verbs that arrive at high rate and must never be logged per-packet.
 HOT_VERBS = frozenset({STEP, ACC, HB})

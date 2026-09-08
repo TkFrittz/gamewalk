@@ -29,6 +29,17 @@ _WINDOW = 4
 #: again after a pause", not "walking very slowly".
 _MAX_INTERVAL_MS = 2000.0
 
+#: And ignore gaps shorter than this. 150ms is 400 steps per minute, which no
+#: one walks; a gap that short means two events for one footfall, or two
+#: datagrams that were queued somewhere and arrived together. Believing them
+#: is actively harmful: the median interval collapses, the adaptive hold
+#: clamps to its floor, and the key releases before the next real step lands.
+_MIN_INTERVAL_MS = 150.0
+
+#: The phone sends a millisecond counter reduced mod 1e8, which wraps roughly
+#: every 27 hours.
+_CLOCK_WRAP_MS = 100_000_000
+
 
 @dataclass
 class Status:
@@ -61,22 +72,53 @@ class Machine:
     #: and treating it as "no previous step" silently discards the interval
     #: that the very first hold duration depends on.
     _prev_step: float | None = None
+    #: The phone's own clock for the previous step, used for cadence.
+    _prev_event: float | None = None
 
     # --- input --------------------------------------------------------------
 
-    def on_step(self, now_ms: float) -> None:
-        """A footfall happened."""
+    def on_step(self, now_ms: float, event_ms: float | None = None) -> None:
+        """A footfall happened.
+
+        `now_ms` is when the datagram arrived here; `event_ms` is when the
+        phone's sensor says the step actually occurred.
+
+        Cadence is measured from `event_ms` whenever it is available, because
+        arrival times carry every delay between the foot and this line: Wi-Fi
+        power-save queuing, and sensor batching that hands over several events
+        at once. Both make steps appear to arrive milliseconds apart, and a
+        cadence built from that reads in the thousands while the hold time
+        collapses to its floor.
+
+        Everything else -- hold expiry, the dead-man switch -- deliberately
+        stays on arrival time, since those measure liveness rather than gait,
+        and extending the hold from the moment we *learned* of a step is the
+        conservative choice when a packet was late.
+        """
         if not self.status.armed:
             return
 
         self.status.steps += 1
-        prev = self._prev_step
+        prev, prev_event = self._prev_step, self._prev_event
         self._prev_step = now_ms
+        self._prev_event = event_ms
         self.status.last_step_ms = now_ms
 
-        if prev is not None and (gap := now_ms - prev) <= _MAX_INTERVAL_MS:
+        gap = None
+        if event_ms is not None and prev_event is not None:
+            gap = event_ms - prev_event
+            if gap < 0:                       # the phone's counter wrapped
+                gap += _CLOCK_WRAP_MS
+        elif prev is not None:
+            gap = now_ms - prev
+
+        if gap is not None and _MIN_INTERVAL_MS <= gap <= _MAX_INTERVAL_MS:
             self._intervals.append(gap)
             del self._intervals[:-_WINDOW]
+        elif gap is not None and gap < _MIN_INTERVAL_MS:
+            # Too fast to be a real step. Keep the cadence we already have
+            # rather than poisoning the median with it.
+            pass
         else:
             # A long gap means this is a fresh start, not a slow step. Keeping
             # the stale intervals would produce a wrong cadence for the first
@@ -176,6 +218,11 @@ class Machine:
         self.status.held = ()
         self._tier_index = -1
         self._prev_step = None
+        self._prev_event = None
+        # Zero the cadence here rather than only on the dead-man path: a
+        # normal stop was leaving the last reading on screen, so the display
+        # claimed 130 spm while standing still.
+        self.status.spm = 0.0
         self._intervals.clear()
         self._step_times.clear()
 

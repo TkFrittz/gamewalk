@@ -72,6 +72,7 @@ class StepService : Service() {
         prefs = Prefs(this)
         link = Link { pkt -> config.onPacket(pkt) }
         config = ConfigClient(link)
+        config.onCommand = ::applyCommand
         sensors = SensorSource(this, ::onStep, ::onSample)
 
         worker = HandlerThread("gw-net").also { it.start() }
@@ -166,18 +167,46 @@ class StepService : Service() {
         Log.i(Link.TAG, "service stopped")
     }
 
-    // --- sensor callbacks (arrive on the sensor thread) ---------------------
+    /**
+     * A setting the desktop app is asking us to change.
+     *
+     * These are the ones only the phone can act on -- which sensor, how fast --
+     * so they can't live in the PC's config file with everything else. Routing
+     * them through a command keeps one place to change a setting from, instead
+     * of some on the phone and some on the PC.
+     */
+    private fun applyCommand(name: String, value: String) {
+        when (name) {
+            "mode" -> {
+                if (value !in listOf("A", "B") || value == prefs.mode) return
+                prefs.mode = value
+                if (running) {
+                    sensors.start(prefs.mode, prefs.accHz, handler)
+                    link.send(Proto.HELLO, Build.MODEL.replace(' ', '_'),
+                              prefs.mode, BuildInfo.VERSION)
+                    notify("Sensor mode $value - ${sensors.descriptor}")
+                }
+            }
 
-    private fun onStep() {
-        steps++
-        link.send(Proto.STEP, System.currentTimeMillis() % 100_000_000)
+            "acc_hz" -> {
+                val hz = value.toIntOrNull() ?: return
+                prefs.accHz = hz.coerceIn(10, 100)
+                if (running && prefs.mode == "B") {
+                    sensors.start(prefs.mode, prefs.accHz, handler)
+                }
+            }
+        }
     }
 
-    private fun onSample(x: Float, y: Float, z: Float) {
-        link.send(
-            Proto.ACC, System.currentTimeMillis() % 100_000_000,
-            fmt(x), fmt(y), fmt(z)
-        )
+    // --- sensor callbacks (arrive on the sensor thread) ---------------------
+
+    private fun onStep(eventMs: Long) {
+        steps++
+        link.send(Proto.STEP, eventMs)
+    }
+
+    private fun onSample(eventMs: Long, x: Float, y: Float, z: Float) {
+        link.send(Proto.ACC, eventMs, fmt(x), fmt(y), fmt(z))
     }
 
     /** Three decimals is well under sensor noise and keeps datagrams small. */
@@ -259,5 +288,5 @@ class StepService : Service() {
 }
 
 object BuildInfo {
-    const val VERSION = "0.1.1"
+    const val VERSION = "0.1.2"
 }

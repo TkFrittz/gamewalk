@@ -90,10 +90,23 @@ class MainActivity : AppCompatActivity() {
 
     /** Repaint the live numbers; the PC pushes STAT but the service's own
      *  counters (steps, sensor state) are polled. */
+    private var lastRunning: Boolean? = null
+
     private val refresh = object : Runnable {
         override fun run() {
-            renderStatusOnly()
-            ui.postDelayed(this, 500)
+            // The service arms on its own worker thread, so `running` flips
+            // some time after the tap -- and repainting only the status card
+            // left the button still reading "Start walking" until something
+            // else forced a full render. Leaving the screen and coming back
+            // was the only way to see the truth.
+            val running = service?.running == true
+            if (running != lastRunning) {
+                lastRunning = running
+                render()
+            } else {
+                renderStatusOnly()
+            }
+            ui.postDelayed(this, 400)
         }
     }
 

@@ -122,7 +122,9 @@ class Server:
         verb = pkt.verb
 
         if verb == protocol.STEP:
-            self.machine.on_step(now_ms)
+            # arg 0 is the phone's own clock for when the step happened.
+            # Cadence comes from that, not from when this datagram landed.
+            self.machine.on_step(now_ms, pkt.farg(0, 0.0) or None)
 
         elif verb == protocol.ACC:
             t = pkt.farg(0, now_ms)
@@ -131,7 +133,7 @@ class Server:
                 self._recorder.write(
                     json.dumps({"t": t, "a": [x, y, z]}) + "\n")
             if self.detector.feed(t, x, y, z):
-                self.machine.on_step(now_ms)
+                self.machine.on_step(now_ms, t)
             self.machine.status.signal = self.detector.smoothed
             self.machine.status.threshold = self.detector.threshold
 
@@ -196,6 +198,42 @@ class Server:
         self.send(addr, protocol.CFG_OK, new_cfg.version)
         self.note(f"config updated to v{new_cfg.version} by {addr[0]}")
         self.broadcast_config(exclude=addr)
+
+    def apply_patch_local(self, patch: dict) -> str | None:
+        """Apply a config patch from the GUI. Returns an error, or None.
+
+        Same validation path as a patch from the phone -- a rejected edit
+        leaves the running config untouched -- but the caller is in-process,
+        so the reason comes back directly instead of over the wire.
+        """
+        try:
+            merged = cfgmod.deep_merge(cfgmod.to_dict(self.cfg), patch)
+            merged["version"] = self.cfg.version + 1
+            new_cfg = cfgmod.validate(merged)
+        except (ValueError, ConfigError) as exc:
+            self.note(f"config rejected: {exc}")
+            return str(exc)
+        self.adopt(new_cfg, save=True)
+        self.note(f"config updated to v{new_cfg.version}")
+        self.broadcast_config()
+        return None
+
+    def set_dry_run(self, dry: bool) -> None:
+        """Swap the key sink at runtime.
+
+        Releases anything currently held first: flipping the switch while W is
+        down would otherwise strand that key on the old sink with nothing left
+        holding a reference to release it.
+        """
+        from .keys import Held, make_sink
+        if dry == self.dry_run:
+            return
+        self.machine.held.release_all()
+        self.dry_run = dry
+        self.sink = make_sink(dry_run=dry, echo=self.verbose)
+        self.machine.held = Held(self.sink)
+        self.note("dry run ON - keys are not pressed" if dry
+                  else "dry run OFF - keys are live")
 
     def adopt(self, new_cfg: Config, save: bool) -> None:
         new_cfg.token = self.cfg.token or new_cfg.token

@@ -19,8 +19,8 @@ import android.util.Log
  */
 class SensorSource(
     context: Context,
-    private val onStep: () -> Unit,
-    private val onSample: (Float, Float, Float) -> Unit,
+    private val onStep: (Long) -> Unit,
+    private val onSample: (Long, Float, Float, Float) -> Unit,
 ) : SensorEventListener {
 
     private val sm = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
@@ -103,10 +103,18 @@ class SensorSource(
     }
 
     override fun onSensorChanged(e: SensorEvent) {
+        // SensorEvent.timestamp is stamped by the hardware when the event
+        // actually occurred, in nanoseconds since boot. System.currentTime-
+        // Millis() here would instead record when Android got round to
+        // delivering it -- and when several events are handed over together,
+        // they all get near-identical times. The PC measures cadence from
+        // this, so a batch would read as hundreds of steps per minute and
+        // collapse the hold time.
+        val t = (e.timestamp / 1_000_000L) % 100_000_000L
         when (e.sensor.type) {
-            Sensor.TYPE_STEP_DETECTOR -> onStep()
+            Sensor.TYPE_STEP_DETECTOR -> onStep(t)
             Sensor.TYPE_LINEAR_ACCELERATION, Sensor.TYPE_ACCELEROMETER ->
-                onSample(e.values[0], e.values[1], e.values[2])
+                onSample(t, e.values[0], e.values[1], e.values[2])
         }
     }
 

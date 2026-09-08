@@ -235,3 +235,96 @@ def test_three_tiers_work_without_code_changes():
     walk(m, spm=190, seconds=6)
     assert m.status.tier == "sprint"
     assert m.status.held == ("ctrl", "shift", "w")
+
+
+# --- reported from real use: bursty arrival --------------------------------
+
+def test_burst_arrival_does_not_wreck_cadence():
+    """The bug behind "one step in game, then it stops".
+
+    Wi-Fi power-save queuing and sensor batching deliver several steps at once.
+    Measured from arrival, the gaps look like milliseconds, the median interval
+    collapses, the adaptive hold clamps to its floor, and the key is released
+    before the next real step lands. Cadence must come from the phone's own
+    event clock instead.
+    """
+    m, sink = build()
+    event = 0.0
+    arrival = 0.0
+    for i in range(20):
+        event += 500.0                       # a steady 120 spm on the phone
+        # ...but delivered in pairs, so every other packet arrives ~15ms later
+        arrival = event + (0.0 if i % 2 else 480.0)
+        m.on_packet(arrival)
+        m.on_step(arrival, event)
+        m.tick(arrival)
+
+    assert 100 <= m.status.spm <= 140, f"cadence read as {m.status.spm:.0f} spm"
+    assert [e for e in sink.events if e[0] == "release"] == [], (
+        "key was released between steps -- this is the in-game stutter")
+
+
+def test_impossibly_fast_steps_are_ignored():
+    """Two events for one footfall must not poison the median."""
+    m, _ = build()
+    walk(m, spm=110, seconds=6)
+    steady = m.status.spm
+
+    t = 6000.0
+    for offset in (0.0, 12.0, 25.0):          # a burst of three, 12ms apart
+        m.on_packet(t + offset)
+        m.on_step(t + offset, t + offset)
+    assert m.status.spm == pytest.approx(steady, rel=0.2)
+
+
+def test_hold_survives_a_late_packet():
+    """A step delivered 300ms late must not shorten the hold below the gap."""
+    m, sink = build()
+    event = 0.0
+    for i in range(12):
+        event += 520.0
+        late = 300.0 if i % 3 == 0 else 0.0
+        arrival = event + late
+        m.on_packet(arrival)
+        m.on_step(arrival, event)
+        m.tick(arrival)
+    assert [e for e in sink.events if e[0] == "release"] == []
+
+
+def test_spm_returns_to_zero_when_walking_stops():
+    """The display was keeping the last reading after you stood still."""
+    m, _ = build()
+    t = walk(m, spm=120, seconds=5)
+    assert m.status.spm > 0
+
+    for dt in range(0, 3000, 50):             # heartbeats continue, steps don't
+        m.on_packet(t + dt)
+        m.tick(t + dt)
+
+    assert not m.status.moving
+    assert m.status.spm == 0.0
+
+
+def test_phone_clock_wrap_is_not_a_huge_gap():
+    """The phone's counter is mod 1e8 and wraps every ~27 hours."""
+    m, _ = build()
+    walk(m, spm=120, seconds=4)
+    before = m.status.spm
+
+    wrap = 100_000_000
+    m.on_packet(5000.0)
+    m.on_step(5000.0, wrap - 200.0)
+    m.on_packet(5500.0)
+    m.on_step(5500.0, 300.0)                  # wrapped: real gap is 500ms
+    assert m.status.spm == pytest.approx(before, rel=0.3)
+
+
+def test_falls_back_to_arrival_time_without_an_event_clock():
+    """An older app sends no timestamp; cadence must still work."""
+    m, _ = build()
+    t = 0.0
+    for _ in range(10):
+        m.on_packet(t)
+        m.on_step(t)
+        t += 500.0
+    assert 110 <= m.status.spm <= 130

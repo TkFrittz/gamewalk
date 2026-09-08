@@ -30,6 +30,8 @@ class ConfigClient(private val link: Link) {
     @Volatile var armed: Boolean = false
         private set
 
+    /** name, value -- a setting the PC is asking the phone to change. */
+    var onCommand: ((String, String) -> Unit)? = null
     var onConfig: ((RemoteConfig) -> Unit)? = null
     var onStat: (() -> Unit)? = null
     var onError: ((String) -> Unit)? = null
@@ -169,6 +171,12 @@ class ConfigClient(private val link: Link) {
                     // the UI optimistically showed.
                     link.send(Proto.CFG_GET)
                 }
+            }
+
+            Proto.CMD -> {
+                val name = pkt.arg(0)
+                val value = pkt.arg(1)
+                main.post { onCommand?.invoke(name, value) }
             }
 
             Proto.STAT -> {

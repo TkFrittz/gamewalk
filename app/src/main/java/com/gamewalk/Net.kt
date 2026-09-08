@@ -36,6 +36,7 @@ object Proto {
     const val CFG_ERR = "CFGERR"
     const val STAT = "STAT"
     const val PONG = "PONG"
+    const val CMD = "CMD"
 
     /** Verbs whose trailing JSON blob must survive intact, and how many plain
      *  arguments precede it. CFG! carries a version before the blob; treating
@@ -93,6 +94,14 @@ class Link(private val onPacket: (Proto.Packet) -> Unit) {
     private var sendHandler: Handler? = null
 
     @Volatile var host: String = ""
+        set(value) {
+            field = value
+            // Resolve once. InetAddress.getByName() on every datagram is
+            // a lookup per step -- and 50 per second in Mode B -- which
+            // can block for milliseconds at a time.
+            resolved = try { InetAddress.getByName(value) } catch (e: Exception) { null }
+        }
+    @Volatile private var resolved: InetAddress? = null
     @Volatile var port: Int = 5599
     @Volatile var token: String = ""
     @Volatile var lastError: String? = null
@@ -167,7 +176,8 @@ class Link(private val onPacket: (Proto.Packet) -> Unit) {
     private fun rawSend(payload: ByteArray) {
         val s = socket ?: return
         try {
-            s.send(DatagramPacket(payload, payload.size, InetAddress.getByName(host), port))
+            val addr = resolved ?: InetAddress.getByName(host).also { resolved = it }
+            s.send(DatagramPacket(payload, payload.size, addr, port))
             lastError = null
         } catch (e: Exception) {
             // Loudly. A silently swallowed send is how 45 steps left the phone

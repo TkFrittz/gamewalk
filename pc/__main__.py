@@ -54,6 +54,11 @@ def main(argv: list[str] | None = None) -> int:
                     help="write incoming Mode B samples to a trace file")
     ap.add_argument("--config", metavar="FILE", type=Path,
                     default=cfgmod.CONFIG_PATH)
+    ap.add_argument("--gui", action="store_true",
+                    help="open the desktop app instead of the console view")
+    ap.add_argument("--page", default="DASHBOARD",
+                    choices=["DASHBOARD", "SETTINGS", "ACTIVITY"],
+                    help="which tab the window opens on")
     ap.add_argument("--selftest", action="store_true",
                     help="validate config and exit")
     args = ap.parse_args(argv)
@@ -109,6 +114,17 @@ def main(argv: list[str] | None = None) -> int:
     time.sleep(0.05)  # let it register so the banner reports the truth
 
     ip = discovery.lan_ip()
+
+    if args.gui:
+        # Everything below this point is the console view. The window carries
+        # the same information, so printing it too would only add noise behind
+        # a UI nobody is meant to look past.
+        from .gui import run as run_gui
+        if cfg.require_pin:
+            server.responder.pairing.open()
+        print(f"GameWalk - window open on {ip}:{cfg.port}")
+        return run_gui(server, dry_run=dry, hotkey=hotkey, page=args.page)
+
     print("GameWalk helper")
     print(f"  listening   {ip}:{cfg.port}  (discovery {cfg.discovery_port})")
     print(f"  profile     {cfg.active_profile}  "

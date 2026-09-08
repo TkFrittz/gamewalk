@@ -1,14 +1,20 @@
 @echo off
-REM GameWalk PC helper.
+REM GameWalk.
 REM
-REM   run.bat              hold real keys (what you want while playing)
-REM   run.bat --dry-run    log keystrokes instead of pressing them
-REM   run.bat --pair       open a pairing window for a new phone
-
+REM   run.bat                 open the window
+REM   run.bat --dry-run       open it, but never actually press keys
+REM   run.bat --console       the old text-only view
+REM
 setlocal
 cd /d "%~dp0"
 
-where python >nul 2>&1
+REM pythonw has no console window attached, which is what makes this look like
+REM an app rather than a script. Crashes are written to gamewalk-error.log and
+REM shown in a dialog, so nothing is lost by hiding the console.
+set LAUNCHER=pythonw
+where pythonw >nul 2>&1 || set LAUNCHER=python
+
+where %LAUNCHER% >nul 2>&1
 if errorlevel 1 (
     echo Python was not found on your PATH.
     echo Install Python 3.10 or newer from https://python.org and try again.
@@ -16,14 +22,12 @@ if errorlevel 1 (
     exit /b 1
 )
 
-python -m pc %*
-set EXITCODE=%ERRORLEVEL%
-
-REM Only pause on failure. Pausing after a normal Ctrl-C quit means an extra
-REM keypress every single time you stop playing.
-if not "%EXITCODE%"=="0" (
-    echo.
-    echo Helper exited with code %EXITCODE%.
-    pause
+REM --console runs in this window; anything else opens the GUI detached.
+echo %* | find /i "--console" >nul
+if not errorlevel 1 (
+    python -m pc %*
+    exit /b %ERRORLEVEL%
 )
-exit /b %EXITCODE%
+
+start "GameWalk" %LAUNCHER% -m pc --gui %*
+exit /b 0
