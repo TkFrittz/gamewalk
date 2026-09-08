@@ -1,0 +1,38 @@
+# --- Local config: holds the LAN token and personal tuning ---
+# Tracked template is pc/config.default.json; the live copy stays local.
+pc/config.json
+config.json
+
+# --- Recorded sensor traces (Mode B tuning data, can get large) ---
+traces/
+*.jsonl
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# --- Android / Gradle (Phase 3) ---
+app/build/
+build/
+.gradle/
+local.properties
+*.apk
+*.aab
+*.keystore
+!debug.keystore
+captures/
+.cxx/
+
+# --- Android SDK installed locally by setup script (Phase 2) ---
+android-sdk/
+tools/android-sdk/
+
+# --- Editors / OS ---
+.idea/
+*.iml
+.vscode/
+Thumbs.db
+desktop.ini
