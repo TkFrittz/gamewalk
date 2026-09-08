@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import ctypes
 import sys
-from ctypes import wintypes
 from typing import Iterable, Protocol
 
 IS_WINDOWS = sys.platform == "win32"
@@ -80,39 +79,51 @@ KEYEVENTF_KEYUP = 0x0002
 KEYEVENTF_SCANCODE = 0x0008
 
 
-# ULONG_PTR is pointer-sized: 8 bytes on x64, 4 on x86. Getting this wrong
-# shifts every field after it.
+# Fixed-width types rather than ctypes.wintypes.
+#
+# Win32 defines WORD, DWORD and LONG as exactly 16, 32 and 32 bits. But
+# wintypes spells DWORD as c_ulong, which is 4 bytes on Windows and 8 on
+# 64-bit Linux -- so the same declaration describes a different struct
+# depending on where it is read. That makes the layout impossible to test off
+# Windows, which is where the test suite runs. Spelling the widths out makes
+# the definition mean one thing everywhere.
+_WORD = ctypes.c_uint16
+_DWORD = ctypes.c_uint32
+_LONG = ctypes.c_int32
+
+# ULONG_PTR really is pointer-sized: 8 bytes on x64, 4 on x86. Getting this
+# wrong shifts every field after it.
 _ULONG_PTR = (
-    ctypes.c_ulonglong if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_ulong
+    ctypes.c_uint64 if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_uint32
 )
 
 
 class _MOUSEINPUT(ctypes.Structure):
     _fields_ = [
-        ("dx", wintypes.LONG),
-        ("dy", wintypes.LONG),
-        ("mouseData", wintypes.DWORD),
-        ("dwFlags", wintypes.DWORD),
-        ("time", wintypes.DWORD),
+        ("dx", _LONG),
+        ("dy", _LONG),
+        ("mouseData", _DWORD),
+        ("dwFlags", _DWORD),
+        ("time", _DWORD),
         ("dwExtraInfo", _ULONG_PTR),
     ]
 
 
 class _KEYBDINPUT(ctypes.Structure):
     _fields_ = [
-        ("wVk", wintypes.WORD),
-        ("wScan", wintypes.WORD),
-        ("dwFlags", wintypes.DWORD),
-        ("time", wintypes.DWORD),
+        ("wVk", _WORD),
+        ("wScan", _WORD),
+        ("dwFlags", _DWORD),
+        ("time", _DWORD),
         ("dwExtraInfo", _ULONG_PTR),
     ]
 
 
 class _HARDWAREINPUT(ctypes.Structure):
     _fields_ = [
-        ("uMsg", wintypes.DWORD),
-        ("wParamL", wintypes.WORD),
-        ("wParamH", wintypes.WORD),
+        ("uMsg", _DWORD),
+        ("wParamL", _WORD),
+        ("wParamH", _WORD),
     ]
 
 
@@ -128,7 +139,7 @@ class _INPUTUNION(ctypes.Union):
 
 class _INPUT(ctypes.Structure):
     _anonymous_ = ("u",)
-    _fields_ = [("type", wintypes.DWORD), ("u", _INPUTUNION)]
+    _fields_ = [("type", _DWORD), ("u", _INPUTUNION)]
 
 
 #: What sizeof(INPUT) must be for SendInput to accept it.
@@ -150,8 +161,8 @@ class WindowsSink:
         # Declaring these makes ctypes marshal the pointer correctly rather
         # than guessing from the Python value.
         self._user32.SendInput.argtypes = (
-            wintypes.UINT, ctypes.POINTER(_INPUT), ctypes.c_int)
-        self._user32.SendInput.restype = wintypes.UINT
+            ctypes.c_uint, ctypes.POINTER(_INPUT), ctypes.c_int)
+        self._user32.SendInput.restype = ctypes.c_uint
 
     def _send(self, name: str, up: bool) -> None:
         key = normalize(name)
