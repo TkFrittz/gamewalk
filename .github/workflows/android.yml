@@ -1,0 +1,75 @@
+name: Android APK
+
+on:
+  push:
+    branches: [main]
+    paths: ['app/**', 'settings.gradle.kts', 'gradle.properties', '.github/workflows/android.yml']
+  workflow_dispatch:
+
+# The build itself needs nothing, but publishing a release writes to the repo.
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      # No Gradle wrapper is committed. A wrapper needs gradle-wrapper.jar, a
+      # binary that can only be produced by Gradle itself -- awkward to create
+      # on a machine with no Android toolchain, which is the whole premise here.
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Build release APK
+        run: gradle --no-daemon :app:assembleRelease
+
+      - name: Name the artifact
+        id: name
+        run: |
+          VERSION=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
+          SHORT=$(git rev-parse --short HEAD)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION-$SHORT" >> "$GITHUB_OUTPUT"
+          cp app/build/outputs/apk/release/app-release.apk gamewalk.apk
+          ls -la gamewalk.apk
+
+      - name: Upload as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gamewalk-apk
+          path: gamewalk.apk
+
+      # A rolling "latest" release means the phone always has one URL to open,
+      # rather than hunting for the newest run's artifacts (which need a GitHub
+      # login to download -- awkward on a phone).
+      - name: Publish to the latest release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest build
+          body: |
+            Automatic build of `${{ github.sha }}`.
+
+            **Install:** open this page on your phone, tap `gamewalk.apk`, allow
+            installs from your browser if asked. Play Protect will warn that the
+            developer is unknown -- that is expected for a sideloaded app; tap
+            "Install anyway".
+
+            Then run `run.bat` on the PC and tap **Find my PC**.
+          files: gamewalk.apk
+          prerelease: false
+          make_latest: true
