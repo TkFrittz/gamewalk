@@ -127,9 +127,10 @@ def main(argv: list[str] | None = None) -> int:
     print("\n  Ctrl-C to quit\n")
 
     last_log = 0
+    last_paint = 0.0
 
     def on_tick(srv: Server, now: float) -> None:
-        nonlocal pin, last_log
+        nonlocal pin, last_log, last_paint
         if pin and not srv.responder.pairing.is_open:
             pin = ""
         if args.verbose:
@@ -139,8 +140,13 @@ def main(argv: list[str] | None = None) -> int:
             for line in srv.log[last_log:]:
                 print("\r" + line.ljust(118))
             last_log = len(srv.log)
-        sys.stdout.write(render(srv, pin))
-        sys.stdout.flush()
+        # The main loop ticks every 10ms, and repainting the status line
+        # that often flickers visibly and writes ~100 lines a second into
+        # any log you redirect it to. 10Hz is smooth to read and cheap.
+        if now - last_paint >= 0.1:
+            last_paint = now
+            sys.stdout.write(render(srv, pin))
+            sys.stdout.flush()
 
     try:
         server.serve_forever(on_tick=on_tick)
