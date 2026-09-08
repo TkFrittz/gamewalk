@@ -1,5 +1,7 @@
 package com.gamewalk
 
+import android.os.Handler
+import android.os.HandlerThread
 import android.util.Log
 import org.json.JSONObject
 import java.net.DatagramPacket
@@ -87,6 +89,8 @@ class Link(private val onPacket: (Proto.Packet) -> Unit) {
     private val seq = AtomicInteger(0)
     private var socket: DatagramSocket? = null
     private var receiver: Thread? = null
+    private var sender: HandlerThread? = null
+    private var sendHandler: Handler? = null
 
     @Volatile var host: String = ""
     @Volatile var port: Int = 5599
@@ -103,6 +107,8 @@ class Link(private val onPacket: (Proto.Packet) -> Unit) {
             val s = DatagramSocket()
             s.broadcast = true
             socket = s
+            sender = HandlerThread("gw-send").also { it.start() }
+            sendHandler = Handler(sender!!.looper)
             receiver = Thread({ receiveLoop(s) }, "gw-recv").apply {
                 isDaemon = true
                 start()
@@ -116,6 +122,9 @@ class Link(private val onPacket: (Proto.Packet) -> Unit) {
 
     fun stop() {
         receiver = null
+        sendHandler = null
+        sender?.quitSafely()
+        sender = null
         socket?.close()
         socket = null
     }
@@ -136,15 +145,35 @@ class Link(private val onPacket: (Proto.Packet) -> Unit) {
         }
     }
 
+    /**
+     * Queue a datagram. Safe to call from any thread, and that is the point.
+     *
+     * Android throws NetworkOnMainThreadException for a socket write on the
+     * main thread, and callers here legitimately live on three different ones:
+     * sensor callbacks, UI click handlers, and the service worker. Making the
+     * send itself thread-agnostic fixes all of them at once, rather than
+     * leaving a trap for whichever caller is added next.
+     *
+     * The datagram is built on the calling thread -- cheap, and it captures
+     * the varargs before they can go out of scope -- then handed to the sender.
+     */
     fun send(verb: String, vararg args: Any) {
+        if (socket == null || host.isEmpty()) return
+        val payload = Proto.build(token, verb, seq.incrementAndGet(), *args)
+        val h = sendHandler ?: return
+        h.post { rawSend(payload) }
+    }
+
+    private fun rawSend(payload: ByteArray) {
         val s = socket ?: return
-        if (host.isEmpty()) return
         try {
-            val payload = Proto.build(token, verb, seq.incrementAndGet(), *args)
             s.send(DatagramPacket(payload, payload.size, InetAddress.getByName(host), port))
             lastError = null
         } catch (e: Exception) {
-            lastError = "send: ${e.message}"
+            // Loudly. A silently swallowed send is how 45 steps left the phone
+            // and none arrived.
+            lastError = "send failed: ${e.javaClass.simpleName}: ${e.message}"
+            Log.w(TAG, "send failed", e)
         }
     }
 

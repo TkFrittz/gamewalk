@@ -5,6 +5,7 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.os.Handler
 import android.util.Log
 
 /**
@@ -36,7 +37,7 @@ class SensorSource(
     fun hasStepDetector(): Boolean =
         sm.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR) != null
 
-    fun start(mode: String, accHz: Int): Boolean {
+    fun start(mode: String, accHz: Int, deliverOn: Handler? = null): Boolean {
         stop()
         this.mode = mode
 
@@ -69,7 +70,15 @@ class SensorSource(
         val periodUs = if (mode == "B") 1_000_000 / accHz.coerceIn(10, 200)
         else SensorManager.SENSOR_DELAY_FASTEST
 
-        val ok = sm.registerListener(this, chosen, periodUs, 0)
+        // Without a Handler, SensorManager delivers events on the MAIN
+        // thread. That matters twice over: a socket write there throws
+        // NetworkOnMainThreadException, and in Mode B it would run the UI
+        // thread at 50Hz. Both are avoided by naming the thread we want.
+        val ok = if (deliverOn != null) {
+            sm.registerListener(this, chosen, periodUs, 0, deliverOn)
+        } else {
+            sm.registerListener(this, chosen, periodUs, 0)
+        }
         descriptor = buildString {
             append(chosen.name)
             append(if (wake) " (wake-up)" else " (non-wake)")

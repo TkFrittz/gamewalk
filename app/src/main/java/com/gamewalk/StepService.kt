@@ -55,6 +55,8 @@ class StepService : Service() {
     @Volatile var startFailure: String? = null
         private set
 
+    private var lastNotifiedError: String? = null
+
     val sensorDescription: String get() = sensors.descriptor
     val linkError: String? get() = link.lastError
     val lastReplyAt: Long get() = link.lastReplyAt
@@ -116,7 +118,7 @@ class StepService : Service() {
 
         acquireLocks()
 
-        val ok = sensors.start(prefs.mode, prefs.accHz)
+        val ok = sensors.start(prefs.mode, prefs.accHz, handler)
         running = true
         steps = 0
 
@@ -192,6 +194,12 @@ class StepService : Service() {
                 // ambiguous -- the PC cannot tell "standing still" from "phone
                 // fell off Wi-Fi" -- and its dead-man switch would be guessing.
                 link.send(Proto.HB)
+                link.lastError?.let { err ->
+                    if (err != lastNotifiedError) {
+                        lastNotifiedError = err
+                        notify(err)
+                    }
+                }
                 h.postDelayed(this, HEARTBEAT_MS)
             }
         }, HEARTBEAT_MS)
@@ -251,5 +259,5 @@ class StepService : Service() {
 }
 
 object BuildInfo {
-    const val VERSION = "0.1.0"
+    const val VERSION = "0.1.1"
 }
