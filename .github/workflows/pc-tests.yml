@@ -1,0 +1,52 @@
+name: PC helper
+
+on:
+  push:
+    branches: [main]
+    paths: ['pc/**', 'tools/**', 'tests/**', '.github/workflows/pc-tests.yml']
+  pull_request:
+    paths: ['pc/**', 'tools/**', 'tests/**', '.github/workflows/pc-tests.yml']
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows is the real target. Ubuntu is here to keep the import-time
+        # platform guards honest: keys.py and hotkey.py must load fine where
+        # there is no Win32 API, or the suite stops running on cheap runners.
+        os: [windows-latest, ubuntu-latest]
+        python: ['3.10', '3.12']
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install pytest
+        run: python -m pip install --quiet pytest
+
+      - name: Config self-test
+        run: python -m pc --selftest
+
+      - name: Unit and integration tests
+        run: python -m pytest tests/ -q
+
+      - name: Smoke test the helper against synthetic steps
+        shell: bash
+        run: |
+          python -m pc --dry-run --verbose > helper.log 2>&1 &
+          sleep 3
+          python tools/fakestep.py --ramp 90:190 --period 8 --duration 10
+          sleep 2
+          echo "--- helper log ---"
+          cat helper.log
+          # One press of w, one of shift, and their releases: proof the key is
+          # held continuously rather than re-pressed per step.
+          test "$(grep -c 'dry-run' helper.log)" -ge 3
+          grep -q 'v w' helper.log
+          grep -q 'v shift' helper.log

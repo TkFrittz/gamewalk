@@ -4,11 +4,26 @@ Walk in place with your phone in your pocket, **screen off**, and your PC thinks
 holding `W`. Jog and it becomes `Shift+W`. A VSteps-style walking-in-place controller built
 from parts you own.
 
-> **Status: design phase. No code yet.**
+> **Status: M1 done — the whole PC half works and is tested. The Android app is next.**
 > **[BUILD_PLAN.md](BUILD_PLAN.md)** is the plan of record — milestones, protocol, config
 > schema, and how the APK gets built and delivered.
 > **[DESIGN.md](DESIGN.md)** is the reasoning behind the architecture; the build plan amends
 > it in a few places and lists every delta.
+
+## Try it now, without a phone
+
+The PC half is complete and testable from the keyboard — that's deliberate, so that
+scancode injection is proven in your game before any Android work exists. See
+**[pc/README.md](pc/README.md)**.
+
+```bash
+python -m pc --dry-run --verbose        # terminal 1: helper, keys logged not pressed
+python tools/fakestep.py --ramp 90:190  # terminal 2: pretend to walk, then jog
+```
+
+A 30-step ramp should log exactly **four** key events — `W` down, `Shift` added entering
+run, `Shift` dropped leaving run, `W` up at the end. One keydown per walk, not one per
+footfall, is the whole smoothness design. Drop `--dry-run` to drive a real game.
 
 ## Install (once M4 lands)
 
