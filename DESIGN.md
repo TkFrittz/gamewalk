@@ -13,6 +13,12 @@ Status: **awaiting approval — nothing built yet.**
 > so R3 returns to the native app** — with R1's toolchain estimate corrected (§7: ~1 GB, no
 > IDE) and R2's detector kept as a fallback (§4b). R1 is preserved at
 > [`docs/DESIGN-R1-kotlin-udp.md`](docs/DESIGN-R1-kotlin-udp.md).
+>
+> **Amended by [BUILD_PLAN.md](BUILD_PLAN.md).** Two later requirements — configure
+> everything from the app with live updating, and install by downloading an APK — change §1
+> (config ownership), §6 (schema), §7 (CI builds the APK; nothing installed locally) and §5
+> (the protocol gains a control channel). BUILD_PLAN.md §11 lists every delta; where the two
+> documents disagree, the build plan wins.
 
 ---
 

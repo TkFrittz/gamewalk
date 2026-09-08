@@ -5,8 +5,19 @@ holding `W`. Jog and it becomes `Shift+W`. A VSteps-style walking-in-place contr
 from parts you own.
 
 > **Status: design phase. No code yet.**
-> The design is settled and awaiting a final go — read **[DESIGN.md](DESIGN.md)** first;
-> it's the source of truth for everything below.
+> **[BUILD_PLAN.md](BUILD_PLAN.md)** is the plan of record — milestones, protocol, config
+> schema, and how the APK gets built and delivered.
+> **[DESIGN.md](DESIGN.md)** is the reasoning behind the architecture; the build plan amends
+> it in a few places and lists every delta.
+
+## Install (once M4 lands)
+
+1. **Phone** — open Releases, tap the APK, install. No toolchain, no cable, no build.
+2. **PC** — run `run.bat`. Python 3.10+, standard library only.
+3. Open the app, tap the PC it finds on your network, type the PIN it shows. Done.
+
+Everything after that — keybinds, speed tiers, sensitivity, hold timing — is configured from
+the phone, and every change applies live without restarting anything.
 
 *(The design doc calls the project **StepLink**, from before this repo existed. Same thing —
 happy to unify the naming either way.)*
@@ -25,22 +36,28 @@ changing a keybind never means rebuilding an APK.
 
 ## Repo layout
 
-| Path | What | Phase |
+| Path | What | Milestone |
 |---|---|---|
-| [DESIGN.md](DESIGN.md) | Full design, decisions and rationale | — |
+| [BUILD_PLAN.md](BUILD_PLAN.md) | Milestones, protocol, config schema, APK pipeline | — |
+| [DESIGN.md](DESIGN.md) | Architecture and the reasoning behind it | — |
 | [docs/DESIGN-R1-kotlin-udp.md](docs/DESIGN-R1-kotlin-udp.md) | Superseded R1 draft, kept for the record | — |
-| `pc/` | Python helper: UDP listener, cadence, state machine, key injection | 1 |
-| `tools/` | `fakestep.py` (synthetic cadence), `replay.py` (trace playback) | 1 |
-| `app/` | Kotlin Android app + foreground service | 3 |
+| `pc/` | Python helper: UDP listener, cadence, state machine, key injection | M1 |
+| `tools/` | `fakestep.py`, `replay.py`, `remote.py` | M1–M2 |
+| `.github/workflows/` | CI: tests, and the APK build + release | M0, M4 |
+| `app/` | Kotlin app + foreground service | M4–M7 |
 
 ## Build order
 
-1. **PC helper** — Python 3.10, stdlib only. Fully testable with `fakestep.py`: no phone and
-   no Android toolchain required. This is deliberate — it proves scancode injection works in
-   your game *before* anything gets installed.
-2. **Toolchain** — JDK 17 + Android command-line tools, ~700 MB, scripted, no IDE.
-3. **The app** — one screen, one foreground service.
-4. **Comfort** — PC discovery beacon, tray icon.
+Detailed in [BUILD_PLAN.md §3](BUILD_PLAN.md). Two gates matter:
+
+- **M1 is go/no-go.** The entire PC half comes first and is testable with `fakestep.py` — no
+  phone, no Android tooling. If synthetic keystrokes don't register in your game, that's a
+  today problem, found for free.
+- **M4 is the delivery gate.** CI builds and signs a *hello-world* APK and publishes it to
+  Releases before the app does anything real, so signing and install friction get debugged in
+  isolation. After M4, every milestone ends with an APK you can install from your phone.
+
+Then: M5 screen-off survival → M6 live config UI → M7 zero-config first run → M8 comfort.
 
 ## Known risks
 
